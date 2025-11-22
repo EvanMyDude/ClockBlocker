@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focus Time Blocker + Gemini</title>
+    <style>
+        :root {
+            --bg-color: #191919;
+            --text-color: #e0e0e0;
+            --border-color: #333333;
+            --accent-color: #2eaadc;
+            --gemini-color: #8e44ad; /* Purple for AI */
+            --past-bg: #252525;
+            --completed-bg: #1e2e1e;
+            --waiting-bg: #2e2e20;
+            --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            font-family: var(--font-stack);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            background: var(--bg-color);
+            display: flex;
+            gap: 20px;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* Layout */
+        .main-column {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            overflow-y: hidden;
+            padding-right: 10px;
+            min-width: 300px;
+        }
+
+        .timeline-wrapper {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .side-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border-color);
+            padding-left: 20px;
+            min-width: 200px;
+            overflow-y: hidden;
+            position: relative;
+        }
+
+        h2 { font-size: 1.2rem; margin-bottom: 0.5rem; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+
+        /* Toolbar & Controls */
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .left-controls { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        .btn-group {
+            display: flex;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .btn-group button {
+            background: transparent;
+            border: none;
+            color: var(--text-color);
+            padding: 6px 12px;
+            cursor: pointer;
+            border-right: 1px solid var(--border-color);
+            font-size: 0.85rem;
+        }
+        .btn-group button:last-child { border-right: none; }
+        .btn-group button.active { background: var(--accent-color); color: white; }
+
+        .toggle-btn, .action-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        /* AI Buttons */
+        .ai-btn {
+            border: 1px solid #228be6; /* Darker Blue */
+            color: #228be6;
+            transition: all 0.2s;
+        }
+        .ai-btn:hover {
+            background: #228be6;
+            color: white;
+            box-shadow: 0 0 8px rgba(34, 139, 230, 0.4);
+        }
+        .ai-loading {
+            opacity: 0.6;
+            cursor: wait !important;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 0.3; } 100% { opacity: 0.6; } }
+
+        /* Time Blocks */
+        .time-block {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            padding: 8px 0;
+            align-items: center;
+            transition: background 0.2s;
+            position: relative;
+        }
+
+        .hour-toggle {
+            width: 20px; height: 20px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: #888; font-size: 0.8rem;
+            user-select: none; margin-right: 2px;
+        }
+        .hour-toggle:hover { color: var(--text-color); }
+        
+        .time-block.sub-slot {
+            padding-left: 22px;
+            border-bottom: 1px dashed #2a2a2a;
+        }
+
+        .time-label {
+            width: 70px;
+            font-size: 0.85rem;
+            color: #888;
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+            transition: color 0.3s;
+        }
+
+        /* Current Time Highlight */
+        .time-label.current-time {
+            color: #ffffff !important;
+            font-weight: 700;
+            text-shadow: 0 0 8px rgba(255,255,255,0.15);
+        }
+
+        .task-input {
+            flex-grow: 1;
+            border: none;
+            font-family: inherit;
+            font-size: 1rem;
+            padding: 8px;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--text-color);
+        }
+
+        .task-input:focus {
+            outline: 2px solid var(--accent-color);
+            background: #333;
+        }
+
+        /* Sub-task Display */
+        .sub-tasks-container {
+            width: 100%;
+            padding-left: 92px;
+            margin-top: -4px;
+            margin-bottom: 4px;
+        }
+        .sub-task-display {
+            font-size: 0.85rem;
+            color: var(--accent-color);
+            padding: 2px 0;
+            opacity: 0.9;
+        }
+
+        /* States */
+        .time-block.past { background-color: var(--past-bg); opacity: 0.8; }
+        .time-block.past .task-input { color: #999; pointer-events: none; }
+
+        .time-block.completed { background-color: var(--completed-bg); }
+        .time-block.completed .task-input { text-decoration: line-through; color: #888; }
+
+        .time-block.needs-review .review-btn { display: block; }
+        .time-block.needs-review .task-input { filter: blur(1px); }
+
+        .review-btn {
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            display: none;
+        }
+
+        /* Waiting Room */
+        .waiting-list { flex-grow: 1; overflow-y: auto; padding-right: 5px; }
+
+        .waiting-item {
+            background: var(--waiting-bg);
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            border: 1px solid transparent;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        }
+
+        .waiting-item:hover { border-color: #dcb22e; }
+        .waiting-item.selected { border-color: var(--accent-color); box-shadow: 0 0 0 2px var(--accent-color); }
+        
+        .item-controls { display: flex; align-items: center; gap: 8px; }
+        .original-time { font-size: 0.7rem; color: #888; }
+
+        /* Sparkle Button (Small) */
+        .sparkle-btn {
+            background: none; border: none; cursor: pointer;
+            font-size: 1rem; padding: 2px 6px; border-radius: 4px;
+            opacity: 0.5; transition: 0.2s;
+        }
+        .sparkle-btn:hover { opacity: 1; background: rgba(142, 68, 173, 0.2); transform: scale(1.1); }
+
+        /* Modals */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            display: none;
+            justify-content: center; align-items: center;
+            z-index: 100;
+        }
+
+        .modal {
+            background: #2d2d2d;
+            padding: 25px;
+            border-radius: 8px;
+            width: 320px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 1px solid #444;
+        }
+
+        .modal h3 { margin-top: 0; color: white; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+        .btn-yes { background: #4caf50; color: white; }
+        .btn-no { background: #f44336; color: white; }
+        .btn-later { background: #444; color: #ddd; }
+        .btn-primary { background: var(--accent-color); color: white; }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            body { flex-direction: column; overflow-y: auto; height: auto; }
+            .main-column { overflow-y: visible; }
+            .side-column { border-left: none; border-top: 1px solid var(--border-color); padding-left: 0; padding-top: 20px; }
+            .toolbar { flex-direction: column; align-items: stretch; }
+            .left-controls { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Timeline -->
+    <div class="main-column">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h2>Today's Plan</h2>
+            <div style="display:flex; gap:10px;">
+                <button onclick="app.clearData()" style="font-size:0.7rem; cursor:pointer; background:none; border:none; color:#666;">Reset</button>
+                <button onclick="app.openSettings()" style="font-size:1rem; cursor:pointer; background:none; border:none; color:#666;">⚙️</button>
+            </div>
+        </div>
+        
+        <!-- Controls -->
+        <div class="toolbar">
+            <div class="left-controls">
+                <button class="toggle-btn" id="fmt-toggle" onclick="app.toggleTimeFormat()">12h / 24h</button>
+                <div class="btn-group">
+                    <button id="btn-60" onclick="app.setIntervalMode(60)">1H</button>
+                    <button id="btn-30" onclick="app.setIntervalMode(30)">30m</button>
+                    <button id="btn-15" onclick="app.setIntervalMode(15)">15m</button>
+                </div>
+            </div>
+            
+            <!-- AI Feature 1: Auto Schedule -->
+            <button class="action-btn ai-btn" id="btn-auto-schedule" onclick="app.autoSchedule()" title="Use Gemini to fill empty slots">
+                ✨ Auto-Schedule
+            </button>
+        </div>
+
+        <div id="timeline" class="timeline-wrapper"></div>
+    </div>
+
+    <!-- Waiting Room -->
+    <div class="side-column">
+        <h2>Waiting Room</h2>
+        
+        <!-- Add Task UI -->
+        <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+            <input type="text" id="new-waiting-task" placeholder="Add idea..." 
+                   style="flex-grow: 1; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background: transparent; color: var(--text-color);"
+                   onkeydown="if(event.key === 'Enter') app.addWaitingTask()">
+            <button onclick="app.addWaitingTask()" style="background: var(--accent-color); color: white; border: none; border-radius: 4px; padding: 0 12px; cursor: pointer;">+</button>
+        </div>
+
+        <p style="font-size: 0.8rem; color: #888; margin-top: -5px; margin-bottom: 15px;">
+            Click <b>✨</b> to break down tasks.
+        </p>
+        <div id="waiting-list" class="waiting-list"></div>
+    </div>
+
+    <!-- Review Modal -->
+    <div id="review-modal" class="modal-overlay">
+        <div class="modal">
+            <h3>Review Task</h3>
+            <p id="modal-task-text" style="font-style: italic; color: #aaa; margin-bottom:20px;"></p>
+            <p>Did you complete this?</p>
+            <div class="modal-actions">
+                <button class="btn btn-yes" onclick="app.handleReviewChoice(true)">Yes</button>
+                <button class="btn btn-no" onclick="app.handleReviewChoice(false)">No</button>
+                <button class="btn btn-later" onclick="app.closeModal('review-modal')">Later</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay">
+        <div class="modal">
+            <h3>Settings</h3>
+            <p style="font-size:0.9rem; color:#aaa;">Enter your Gemini API Key to enable AI features.</p>
+            <input type="password" id="api-key-input" placeholder="AIzaSy..." style="width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 15px; background: #333; border: 1px solid #555; color: white; border-radius: 4px;">
+            <div class="modal-actions">
+                <button class="btn btn-later" onclick="app.closeModal('settings-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="app.saveSettings()">Save</button>
+            </div>
+            <p style="font-size:0.75rem; color:#666; margin-top:15px;">
+                Key is stored in your browser's localStorage.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const app = (() => {
+            // Configuration
+            const START_HOUR = 7;  // 7 AM
+            const END_HOUR = 22;   // 10 PM
+            
+            // App State
+            let state = {
+                blocks: {},     
+                waitingRoom: [],
+                apiKey: '' // Stored API key
+            };
+            
+            let viewSettings = {
+                interval: 30, 
+                use12h: true,
+                expandedHours: new Set()
+            };
+
+            let selectedWaitingTask = null;
+            let currentReviewBlockId = null;
+            const todayKey = `timeblock_${new Date().toISOString().split('T')[0]}`;
+
+            // --- Initialization ---
+            function init() {
+                loadData();
+                resetExpandedHours(); 
+                updateUI();
+                setInterval(() => checkTime(), 30000);
+            }
+
+            function loadData() {
+                const saved = localStorage.getItem(todayKey);
+                if (saved) {
+                    state = JSON.parse(saved);
+                    // Legacy migration for existing users without apiKey field
+                    if (!state.apiKey) state.apiKey = ''; 
+                }
+            }
+
+            function saveData() {
+                localStorage.setItem(todayKey, JSON.stringify(state));
+            }
+            
+            function resetExpandedHours() {
+                viewSettings.expandedHours.clear();
+                viewSettings.expandedHours.add(new Date().getHours());
+            }
+
+            // --- Gemini AI Integration ---
+
+            async function callGemini(prompt) {
+                if (!state.apiKey) {
+                    alert("Please enter your Gemini API Key in Settings (⚙️) to use AI features.");
+                    return null;
+                }
+
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${state.apiKey}`;
+                
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }]
+                };
+
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const data = await response.json();
+                    if (data.error) throw new Error(data.error.message);
+                    
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    // Clean markdown code blocks if present
+                    const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                    return JSON.parse(cleanedText);
+                } catch (error) {
+                    console.error("Gemini Error:", error);
+                    alert("AI Error: " + error.message);
+                    return null;
+                }
+            }
+
+            async function breakDownTask(index, btnElement) {
+                const task = state.waitingRoom[index];
+                if(!task) return;
+
+                // Loading State
+                const originalIcon = btnElement.innerText;
+                btnElement.innerText = "⏳";
+                btnElement.classList.add('ai-loading');
+
+                const prompt = `
+                    You are a productivity expert. 
+                    Break down the task "${task.text}" into 2 to 4 smaller, concrete, actionable sub-tasks.
+                    Return ONLY a raw JSON array of strings. 
+                    Example: ["Draft outline", "Research sources", "Write intro"]
+                `;
+
+                const result = await callGemini(prompt);
+
+                if (result && Array.isArray(result)) {
+                    // Remove original task
+                    state.waitingRoom.splice(index, 1);
+                    // Add new tasks
+                    result.forEach(subTask => {
+                        state.waitingRoom.push({
+                            text: subTask,
+                            originalTime: 'AI Breakdown',
+                            id: Date.now() + Math.random()
+                        });
+                    });
+                    saveData();
+                    renderWaitingRoom();
+                } else {
+                    btnElement.innerText = originalIcon;
+                    btnElement.classList.remove('ai-loading');
+                }
+            }
+
+            async function autoSchedule() {
+                const btn = document.getElementById('btn-auto-schedule');
+                const originalText = btn.innerText;
+                btn.innerText = "Running...";
+                btn.classList.add('ai-loading');
+
+                // 1. Identify empty slots (in current view interval)
+                // For simplicity, we only check primary slots in the current interval settings
+                const emptySlots = [];
+                for (let h = START_HOUR; h <= END_HOUR; h++) {
+                    if (viewSettings.interval === 60) {
+                        checkSlot(h, 0, emptySlots);
+                    } else if (viewSettings.interval === 30) {
+                        checkSlot(h, 0, emptySlots);
+                        checkSlot(h, 30, emptySlots);
+                    } else {
+                        checkSlot(h, 0, emptySlots);
+                        checkSlot(h, 15, emptySlots);
+                        checkSlot(h, 30, emptySlots);
+                        checkSlot(h, 45, emptySlots);
+                    }
+                }
+
+                function checkSlot(h, m, list) {
+                    const key = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                    const block = state.blocks[key];
+                    if (!block || !block.text || block.text.trim() === '') {
+                        list.push(key);
+                    }
+                }
+
+                if (emptySlots.length === 0) {
+                    alert("No empty slots available!");
+                    btn.innerText = originalText;
+                    btn.classList.remove('ai-loading');
+                    return;
+                }
+
+                if (state.waitingRoom.length === 0) {
+                    alert("Waiting room is empty!");
+                    btn.innerText = originalText;
+                    btn.classList.remove('ai-loading');
+                    return;
+                }
+
+                // 2. Build Prompt
+                const tasksJson = JSON.stringify(state.waitingRoom.map(t => t.text));
+                const slotsJson = JSON.stringify(emptySlots);
+                
+                const prompt = `
+                    I have these tasks: ${tasksJson}.
+                    I have these empty time slots (24h format): ${slotsJson}.
+                    Assign the tasks to the slots logically. 
+                    You do not have to use all slots.
+                    Return ONLY a raw JSON object mapping time key to task string.
+                    Example: {"09:00": "Task A", "10:30": "Task B"}
+                `;
+
+                // 3. Call API
+                const mapping = await callGemini(prompt);
+
+                // 4. Apply Results
+                if (mapping) {
+                    const usedTasks = new Set();
+                    
+                    Object.entries(mapping).forEach(([timeKey, taskText]) => {
+                        if (emptySlots.includes(timeKey)) {
+                            // Update block
+                            if (!state.blocks[timeKey]) state.blocks[timeKey] = { status: 'active' };
+                            state.blocks[timeKey].text = taskText;
+                            state.blocks[timeKey].status = 'active';
+                            
+                            usedTasks.add(taskText);
+                        }
+                    });
+
+                    // Filter waiting room (remove scheduled tasks)
+                    // Simple exact match string check
+                    state.waitingRoom = state.waitingRoom.filter(t => !Object.values(mapping).includes(t.text));
+
+                    saveData();
+                    updateUI();
+                }
+
+                btn.innerText = originalText;
+                btn.classList.remove('ai-loading');
+            }
+
+            // --- View Control ---
+            function updateUI() {
+                renderTimeline();
+                renderWaitingRoom();
+                updateToolbar();
+                checkTime();
+            }
+            
+            function toggleTimeFormat() { viewSettings.use12h = !viewSettings.use12h; updateUI(); }
+            function setIntervalMode(mins) { 
+                viewSettings.interval = mins; 
+                if (mins === 15) resetExpandedHours(); 
+                updateUI(); 
+            }
+            function toggleHourExpansion(hour) {
+                if (viewSettings.expandedHours.has(hour)) viewSettings.expandedHours.delete(hour);
+                else viewSettings.expandedHours.add(hour);
+                renderTimeline();
+            }
+
+            function updateToolbar() {
+                document.getElementById('fmt-toggle').innerText = viewSettings.use12h ? "Format: 12h" : "Format: 24h";
+                ['60', '30', '15'].forEach(m => {
+                    const btn = document.getElementById(`btn-${m}`);
+                    btn.classList.toggle('active', parseInt(m) === viewSettings.interval);
+                });
+            }
+
+            // --- Settings ---
+            function openSettings() {
+                document.getElementById('api-key-input').value = state.apiKey || '';
+                document.getElementById('settings-modal').style.display = 'flex';
+            }
+            function saveSettings() {
+                const key = document.getElementById('api-key-input').value.trim();
+                state.apiKey = key;
+                saveData();
+                closeModal('settings-modal');
+            }
+
+            // --- Rendering ---
+            function renderTimeline() {
+                const container = document.getElementById('timeline');
+                container.innerHTML = '';
+
+                for (let h = START_HOUR; h <= END_HOUR; h++) {
+                    if (viewSettings.interval === 60) {
+                        renderSlot(container, h, 0, false); 
+                        renderCoalescedTasks(container, h, [15, 30, 45]);
+                    } 
+                    else if (viewSettings.interval === 30) {
+                        renderSlot(container, h, 0, false);
+                        renderCoalescedTasks(container, h, [15]);
+                        renderSlot(container, h, 30, false);
+                        renderCoalescedTasks(container, h, [45]);
+                    } 
+                    else if (viewSettings.interval === 15) {
+                        const isExpanded = viewSettings.expandedHours.has(h);
+                        renderSlot(container, h, 0, true, isExpanded);
+                        if (isExpanded) {
+                            renderSlot(container, h, 15, false, false, true);
+                            renderSlot(container, h, 30, false, false, true);
+                            renderSlot(container, h, 45, false, false, true);
+                        }
+                    }
+                }
+                checkTime();
+            }
+
+            function renderSlot(container, h, m, hasToggle, isExpanded = false, isSubSlot = false) {
+                const timeKey = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                const blockData = state.blocks[timeKey] || { text: '', status: 'active' };
+                
+                const div = document.createElement('div');
+                div.className = `time-block ${blockData.status === 'completed' ? 'completed' : ''} ${isSubSlot ? 'sub-slot' : ''}`;
+                div.dataset.time = timeKey;
+
+                let toggleHtml = '';
+                if (viewSettings.interval === 15) {
+                    if (hasToggle) toggleHtml = `<div class="hour-toggle" onclick="app.toggleHourExpansion(${h})">${isExpanded ? '▼' : '‣'}</div>`;
+                    else toggleHtml = `<div class="hour-toggle"></div>`;
+                }
+
+                div.innerHTML = `
+                    ${toggleHtml}
+                    <span class="time-label">${formatTimeDisplay(h, m)}</span>
+                    <input type="text" class="task-input" value="${blockData.text}" 
+                           onchange="app.updateBlock('${timeKey}', this.value)"
+                           onclick="app.handleSlotClick('${timeKey}')">
+                    <button class="review-btn" onclick="app.openReview('${timeKey}')">Review</button>
+                `;
+                container.appendChild(div);
+            }
+
+            function renderCoalescedTasks(container, h, minutesToCheck) {
+                let hiddenTasksHtml = '';
+                minutesToCheck.forEach(m => {
+                    const timeKey = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                    const data = state.blocks[timeKey];
+                    if (data && data.text && data.status !== 'migrated') {
+                        hiddenTasksHtml += `<div class="sub-task-display">${formatTimeDisplay(h, m)} ${data.text}</div>`;
+                    }
+                });
+                if (hiddenTasksHtml) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'sub-tasks-container';
+                    wrapper.innerHTML = hiddenTasksHtml;
+                    container.appendChild(wrapper);
+                }
+            }
+
+            // --- Logic ---
+            function formatTimeDisplay(h, m) {
+                if (!viewSettings.use12h) return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                const h12 = h % 12 || 12;
+                return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
+            }
+
+            function updateBlock(timeId, text) {
+                if (!state.blocks[timeId]) state.blocks[timeId] = { status: 'active' };
+                state.blocks[timeId].text = text;
+                saveData();
+            }
+            
+            function addWaitingTask() {
+                const input = document.getElementById('new-waiting-task');
+                const text = input.value.trim();
+                if (!text) return;
+                state.waitingRoom.push({ text: text, originalTime: 'Backlog', id: Date.now() });
+                input.value = '';
+                saveData();
+                renderWaitingRoom();
+            }
+
+            function checkTime() {
+                const now = new Date();
+                const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                
+                document.querySelectorAll('.time-block').forEach(block => {
+                    const timeStr = block.dataset.time; 
+                    if(!timeStr) return;
+                    
+                    const [h, m] = timeStr.split(':').map(Number);
+                    const blockStart = h * 60 + m;
+                    // Dynamic duration based on view setting
+                    const duration = viewSettings.interval; 
+                    
+                    // Past: Start + Duration < Current
+                    const isPast = currentMinutes >= (blockStart + duration);
+                    // Current: Start <= Current < End
+                    const isCurrent = currentMinutes >= blockStart && currentMinutes < (blockStart + duration);
+
+                    const label = block.querySelector('.time-label');
+                    const data = state.blocks[timeStr];
+                    const hasText = data && data.text && data.text.trim() !== "";
+                    const isCompleted = data && data.status === 'completed';
+
+                    // Handle Past
+                    if (isPast) {
+                        block.classList.add('past');
+                        if (hasText && !isCompleted) block.classList.add('needs-review');
+                        else block.classList.remove('needs-review');
+                    } else {
+                        block.classList.remove('past', 'needs-review');
+                    }
+
+                    // Handle Current (White Text)
+                    if (isCurrent) {
+                        if(label) label.classList.add('current-time');
+                    } else {
+                        if(label) label.classList.remove('current-time');
+                    }
+                });
+            }
+
+            // --- Interactions ---
+            function openReview(timeId) {
+                currentReviewBlockId = timeId;
+                document.getElementById('modal-task-text').innerText = `"${state.blocks[timeId].text}"`;
+                document.getElementById('review-modal').style.display = 'flex';
+            }
+
+            function handleReviewChoice(completed) {
+                const block = state.blocks[currentReviewBlockId];
+                if (completed) {
+                    block.status = 'completed';
+                } else {
+                    state.waitingRoom.push({
+                        text: block.text,
+                        originalTime: formatTimeDisplay(...currentReviewBlockId.split(':').map(Number)),
+                        id: Date.now()
+                    });
+                    block.text = ''; block.status = 'active';
+                }
+                saveData();
+                closeModal('review-modal');
+                updateUI();
+            }
+
+            function closeModal(modalId) {
+                document.getElementById(modalId).style.display = 'none';
+                currentReviewBlockId = null;
+            }
+
+            function selectWaitingTask(index) {
+                selectedWaitingTask = (selectedWaitingTask === index) ? null : index;
+                renderWaitingRoom();
+            }
+            
+            function renderWaitingRoom() {
+                const container = document.getElementById('waiting-list');
+                container.innerHTML = '';
+                state.waitingRoom.forEach((item, index) => {
+                    const div = document.createElement('div');
+                    div.className = `waiting-item ${selectedWaitingTask === index ? 'selected' : ''}`;
+                    
+                    // Task Text
+                    const textSpan = document.createElement('span');
+                    textSpan.innerText = item.text;
+                    textSpan.onclick = () => selectWaitingTask(index);
+                    textSpan.style.flexGrow = 1;
+
+                    // AI Button
+                    const aiBtn = document.createElement('button');
+                    aiBtn.className = 'sparkle-btn';
+                    aiBtn.innerText = '✨';
+                    aiBtn.title = 'Break down this task with Gemini';
+                    aiBtn.onclick = (e) => { e.stopPropagation(); breakDownTask(index, aiBtn); };
+
+                    const metaDiv = document.createElement('div');
+                    metaDiv.className = 'item-controls';
+                    metaDiv.innerHTML = `<span class="original-time">${item.originalTime}</span>`;
+                    metaDiv.appendChild(aiBtn);
+
+                    div.appendChild(textSpan);
+                    div.appendChild(metaDiv);
+                    container.appendChild(div);
+                });
+            }
+
+            function handleSlotClick(timeId) {
+                if (selectedWaitingTask !== null) {
+                    const task = state.waitingRoom[selectedWaitingTask];
+                    if (!state.blocks[timeId]) state.blocks[timeId] = { status: 'active' };
+                    if (state.blocks[timeId].text) { alert("Clear this slot first!"); return; }
+                    state.blocks[timeId].text = task.text;
+                    state.blocks[timeId].status = 'active'; 
+                    state.waitingRoom.splice(selectedWaitingTask, 1);
+                    selectedWaitingTask = null;
+                    saveData();
+                    updateUI();
+                }
+            }
+            
+            function clearData() {
+                if(confirm("Clear all tasks for today?")) {
+                    state = { blocks: {}, waitingRoom: [], apiKey: state.apiKey }; // Preserve API key
+                    saveData();
+                    init(); 
+                }
+            }
+            
+            return {
+                init, updateBlock, addWaitingTask, openReview, handleReviewChoice, closeModal, 
+                handleSlotClick, clearData, toggleTimeFormat, setIntervalMode, toggleHourExpansion,
+                openSettings, saveSettings, autoSchedule
+            };
+        })();
+
+        app.init();
+    </script>
+</body>
+</html>
