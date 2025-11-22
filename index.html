@@ -98,6 +98,15 @@
             cursor: pointer;
             font-size: 0.85rem;
         }
+        
+        .reset-btn {
+            font-size: 0.7rem; 
+            cursor: pointer; 
+            background: none; 
+            border: none; 
+            color: #666;
+        }
+        .reset-btn:hover { color: #999; }
 
         /* AI Buttons */
         .ai-btn {
@@ -240,13 +249,14 @@
         .item-controls { display: flex; align-items: center; gap: 8px; }
         .original-time { font-size: 0.7rem; color: #888; }
 
-        /* Sparkle Button (Small) */
-        .sparkle-btn {
+        /* Action Buttons (Small) */
+        .icon-btn {
             background: none; border: none; cursor: pointer;
             font-size: 1rem; padding: 2px 6px; border-radius: 4px;
             opacity: 0.5; transition: 0.2s;
         }
-        .sparkle-btn:hover { opacity: 1; background: rgba(142, 68, 173, 0.2); transform: scale(1.1); }
+        .icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.1); transform: scale(1.1); }
+        .delete-btn:hover { background: rgba(244, 67, 54, 0.2); color: #f44336; }
 
         /* Modals */
         .modal-overlay {
@@ -322,7 +332,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <h2>Today's Plan</h2>
             <div style="display:flex; gap:10px;">
-                <button onclick="app.clearData()" style="font-size:0.7rem; cursor:pointer; background:none; border:none; color:#666;">Reset</button>
+                <button onclick="app.clearTimeline()" class="reset-btn">Reset</button>
                 <button onclick="app.openSettings()" style="font-size:1rem; cursor:pointer; background:none; border:none; color:#666;">⚙️</button>
             </div>
         </div>
@@ -348,7 +358,10 @@
 
     <!-- Waiting Room -->
     <div class="side-column">
-        <h2>Waiting Room</h2>
+        <h2>
+            Waiting Room
+            <button onclick="app.clearWaitingRoom()" class="reset-btn">Clear</button>
+        </h2>
         
         <div style="display: flex; gap: 8px; margin-bottom: 15px;">
             <input type="text" id="new-waiting-task" placeholder="Add idea..." 
@@ -460,6 +473,12 @@
             // --- Drag and Drop ---
             
             function dragStart(ev, type, id) {
+                // FIX: Cancel any active "click-to-move" selection to prevents conflicts
+                if (selectedWaitingTask !== null) {
+                    selectedWaitingTask = null;
+                    renderWaitingRoom();
+                }
+
                 // Store the type (waiting/block) and the id (index/timeKey)
                 ev.dataTransfer.setData("application/json", JSON.stringify({ type, id }));
                 ev.dataTransfer.effectAllowed = "move";
@@ -486,11 +505,6 @@
                 const srcType = source.type;
                 const srcId = source.id;
 
-                // Logic:
-                // 1. Waiting -> Block: Schedule task
-                // 2. Block -> Waiting: Unschedule task
-                // 3. Block -> Block: Move/Swap task
-                
                 let textToMove = '';
 
                 // 1. Get Task Text & Remove from Source
@@ -517,8 +531,6 @@
                         id: Date.now()
                     });
                 } else if (targetType === 'block') {
-                    // If target block has text, move it to waiting room (swap behavior)
-                    // or just overwrite? Let's move existing to waiting room to prevent data loss.
                     if (!state.blocks[targetId]) state.blocks[targetId] = { status: 'active' };
                     
                     if (state.blocks[targetId].text) {
@@ -576,10 +588,8 @@
                 const task = state.waitingRoom[index];
                 if(!task) return;
 
-                // Save state for undo
                 saveUndoState();
 
-                // Loading State
                 const originalIcon = btnElement.innerText;
                 btnElement.innerText = "⏳";
                 btnElement.classList.add('ai-loading');
@@ -594,9 +604,7 @@
                 const result = await callGemini(prompt);
 
                 if (result && Array.isArray(result)) {
-                    // Remove original task
                     state.waitingRoom.splice(index, 1);
-                    // Add new tasks
                     result.forEach(subTask => {
                         state.waitingRoom.push({
                             text: subTask,
@@ -614,8 +622,6 @@
             }
 
             async function autoSchedule() {
-                // Note: Auto-schedule changes a lot of state, implementing undo for it 
-                // is complex, but we can try saving the whole block state.
                 saveUndoState();
 
                 const btn = document.getElementById('btn-auto-schedule');
@@ -647,7 +653,6 @@
                 }
 
                 if (emptySlots.length === 0 || state.waitingRoom.length === 0) {
-                    // Reset if check fails
                     btn.innerText = originalText;
                     btn.classList.remove('ai-loading');
                     if(emptySlots.length === 0) alert("No empty slots!");
@@ -691,7 +696,6 @@
             // --- Undo System ---
             
             function saveUndoState() {
-                // Deep copy the current state
                 undoState = JSON.parse(JSON.stringify(state));
             }
 
@@ -703,7 +707,7 @@
                 if (toastTimeout) clearTimeout(toastTimeout);
                 toastTimeout = setTimeout(() => {
                     container.style.display = 'none';
-                    undoState = null; // Clear undo history after timeout to save memory
+                    undoState = null; 
                 }, 5000);
             }
 
@@ -858,6 +862,14 @@
                 saveData();
                 renderWaitingRoom();
             }
+            
+            function deleteWaitingTask(index) {
+                saveUndoState();
+                state.waitingRoom.splice(index, 1);
+                saveData();
+                renderWaitingRoom();
+                showToast("Task deleted");
+            }
 
             function checkTime() {
                 const now = new Date();
@@ -944,17 +956,27 @@
                     textSpan.onclick = () => selectWaitingTask(index);
                     textSpan.style.flexGrow = 1;
 
-                    // AI Button
-                    const aiBtn = document.createElement('button');
-                    aiBtn.className = 'sparkle-btn';
-                    aiBtn.innerText = '✨';
-                    aiBtn.title = 'Break down this task with Gemini';
-                    aiBtn.onclick = (e) => { e.stopPropagation(); breakDownTask(index, aiBtn); };
-
+                    // Controls
                     const metaDiv = document.createElement('div');
                     metaDiv.className = 'item-controls';
                     metaDiv.innerHTML = `<span class="original-time">${item.originalTime}</span>`;
+
+                    // AI Button
+                    const aiBtn = document.createElement('button');
+                    aiBtn.className = 'icon-btn sparkle-btn';
+                    aiBtn.innerText = '✨';
+                    aiBtn.title = 'Break down task';
+                    aiBtn.onclick = (e) => { e.stopPropagation(); breakDownTask(index, aiBtn); };
+                    
+                    // Delete Button
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'icon-btn delete-btn';
+                    delBtn.innerText = '🗑️';
+                    delBtn.title = 'Delete task';
+                    delBtn.onclick = (e) => { e.stopPropagation(); deleteWaitingTask(index); };
+
                     metaDiv.appendChild(aiBtn);
+                    metaDiv.appendChild(delBtn);
 
                     div.appendChild(textSpan);
                     div.appendChild(metaDiv);
@@ -966,7 +988,16 @@
                 if (selectedWaitingTask !== null) {
                     const task = state.waitingRoom[selectedWaitingTask];
                     if (!state.blocks[timeId]) state.blocks[timeId] = { status: 'active' };
-                    if (state.blocks[timeId].text) { alert("Clear this slot first!"); return; }
+                    
+                    // FIX: Instead of alerting, SWAP automatically
+                    if (state.blocks[timeId].text) {
+                         state.waitingRoom.push({
+                            text: state.blocks[timeId].text,
+                            originalTime: 'Swapped',
+                            id: Date.now()
+                        });
+                    }
+
                     state.blocks[timeId].text = task.text;
                     state.blocks[timeId].status = 'active'; 
                     state.waitingRoom.splice(selectedWaitingTask, 1);
@@ -976,17 +1007,25 @@
                 }
             }
             
-            function clearData() {
-                if(confirm("Clear all tasks for today?")) {
-                    state = { blocks: {}, waitingRoom: [], apiKey: state.apiKey }; // Preserve API key
+            function clearTimeline() {
+                if(confirm("Clear Today's Plan? (Waiting Room will remain)")) {
+                    state.blocks = {};
                     saveData();
-                    init(); 
+                    updateUI();
+                }
+            }
+
+            function clearWaitingRoom() {
+                if(confirm("Clear all items in the Waiting Room?")) {
+                    state.waitingRoom = [];
+                    saveData();
+                    updateUI();
                 }
             }
             
             return {
-                init, updateBlock, addWaitingTask, openReview, handleReviewChoice, closeModal, 
-                handleSlotClick, clearData, toggleTimeFormat, setIntervalMode, toggleHourExpansion,
+                init, updateBlock, addWaitingTask, deleteWaitingTask, openReview, handleReviewChoice, closeModal, 
+                handleSlotClick, clearTimeline, clearWaitingRoom, toggleTimeFormat, setIntervalMode, toggleHourExpansion,
                 openSettings, saveSettings, autoSchedule,
                 dragStart, dragOver, dragLeave, drop, executeUndo
             };
